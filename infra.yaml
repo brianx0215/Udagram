@@ -194,6 +194,131 @@ Resources:
             RouteTableId: !Ref PrivateRouteTable2
             SubnetId: !Ref PrivateSubnet2
 
+    LBSecGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Allow http to load balancer
+            VpcId: !Ref VPC
+            SecurityGroupIngress:
+            -   IpProtocol: tcp
+                FromPort: 80
+                ToPort: 80
+                CidrIp: 0.0.0.0/0
+            SecurityGroupEgress:
+            -   IpProtocol: tcp
+                FromPort: 80
+                ToPort: 80
+                CidrIp: 0.0.0.0/0
+    
+    WebServerSecGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Allow http to hosts and SSH from local only
+            VpcId: !Ref VPC
+            SecurityGroupIngress:
+            -   IpProtocol: tcp
+                FromPort: 80
+                ToPort: 80
+                CidrIp: 0.0.0.0/0
+            -   IpProtocol: tcp
+                FromPort: 22
+                ToPort: 22
+                CidrIp: 0.0.0.0/0
+            SecurityGroupEgress:
+            -   IpProtocol: tcp
+                FromPort: 0
+                ToPort: 65535
+                CidrIp: 0.0.0.0/0
+
+    WebAppLaunchConfig:
+        Type: AWS::AutoScaling::LaunchConfiguration
+        Properties:
+            UserData:
+                Fn::Base64: !Sub |
+                    #!/bin/bash
+                    apt-get update -y
+                    apt-get install unzip awscli -y
+                    apt-get install apache2 -y
+                    systemctl start apache2.service
+                    aws s3 cp s3://udacity-demo-1/udacity.zip ./
+                    unzip -o udacity.zip -d /var/www/html
+                    rm -f ~/udacity.zip
+            IamInstanceProfile: !Ref S3ReadOnlyAccessRole
+            ImageId: ami-0823c236601fef765
+            KeyName: Udacity
+            SecurityGroups:
+            -   Ref: WebServerSecGroup
+            InstanceType: t3.medium
+            BlockDeviceMappings:
+            -   DeviceName: "/dev/sdk"
+                Ebs:
+                    VolumeSize: '10'
+
+    WebAppGroup:
+        Type: AWS::AutoScaling::AutoScalingGroup
+        Properties:
+            VPCZoneIdentifier:
+            -   Ref: PrivateSubnet1
+            -   Ref: PrivateSubnet2
+            LaunchConfigurationName:
+                Ref: WebAppLaunchConfig
+            MinSize: '1'
+            MaxSize: '2'
+            TargetGroupARNs:
+            -   Ref: WebAppTargetGroup
+
+    WebAppLB:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Properties:
+            Subnets:
+            -   Ref: PublicSubnet1
+            -   Ref: PublicSubnet2
+            SecurityGroups:
+            -   Ref: LBSecGroup
+
+    Listener:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Properties:
+            DefaultActions:
+            -   Type: forward
+                TargetGroupArn:
+                    Ref: WebAppTargetGroup
+            LoadBalancerArn:
+                Ref: WebAppLB
+            Port: '80'
+            Protocol: HTTP
+
+    ALBListenerRule:
+        Type: AWS::ElasticLoadBalancingV2::ListenerRule
+        Properties:
+            Actions:
+            -   Type: forward
+                TargetGroupArn: !Ref 'WebAppTargetGroup'
+            Conditions:
+            -   Field: path-pattern
+                Values: [/var/www/html/index.html]
+            ListenerArn: !Ref 'Listener'
+            Priority: 1
+
+    WebAppTargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            HealthCheckIntervalSeconds: 10
+            HealthCheckPath: /var/www/html/index.html
+            HealthCheckProtocol: HTTP
+            HealthCheckTimeoutSeconds: 8
+            HealthyThresholdCount: 2
+            Port: 80
+            Protocol: HTTP
+            UnhealthyThresholdCount: 5
+            VpcId: !Ref VPC
+
+    S3ReadOnlyAccessRole:
+        Type: AWS::IAM::InstanceProfile
+        Properties: 
+            Roles:
+            -   UdacityS3ReadOnlyEC2
+
 Outputs: 
     VPC: 
         Description: VPC
