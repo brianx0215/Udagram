@@ -245,7 +245,6 @@ Resources:
                     rm -f ~/udacity.zip
             IamInstanceProfile: !Ref S3ReadOnlyAccessRole
             ImageId: ami-0823c236601fef765
-            KeyName: Udacity
             SecurityGroups:
             -   Ref: WebServerSecGroup
             InstanceType: t3.medium
